@@ -1,11 +1,18 @@
 import { supabase } from './supabaseClient';
-import { FinancialRecord, KPIData } from '../types';
+import { FinancialRecord, KPIData, ReceivableRecord } from '../types';
 import { TABLE_NAME, SUPABASE_URL, SUPABASE_KEY } from '../constants';
 
 // --- FUNÇÕES DE SUPABASE ---
 
 export interface FetchResult {
   data: FinancialRecord[];
+  isMock: boolean;
+  error?: string;
+  totalDbCount?: number;
+}
+
+export interface FetchReceivablesResult {
+  data: ReceivableRecord[];
   isMock: boolean;
   error?: string;
   totalDbCount?: number;
@@ -70,9 +77,63 @@ export const fetchFinancialData = async (): Promise<FetchResult> => {
   }
 };
 
+export const fetchReceivablesData = async (): Promise<FetchReceivablesResult> => {
+  try {
+    const TABLE_RECEIVABLES = 'rel_contas_receber';
+    
+    // 1. Busca o total exato de registros no banco (count)
+    const countResult = await supabase
+      .from(TABLE_RECEIVABLES)
+      .select('*', { count: 'exact', head: true });
+    
+    const totalDbCount = countResult.count || 0;
+
+    // 2. Busca os dados usando Paginação
+    let allData: ReceivableRecord[] = [];
+    const PAGE_SIZE = 1000;
+    const promises = [];
+
+    if (totalDbCount === 0) {
+       return { data: [], isMock: false, totalDbCount: 0 };
+    }
+
+    for (let from = 0; from < totalDbCount; from += PAGE_SIZE) {
+      const to = from + PAGE_SIZE - 1;
+      
+      const promise = supabase
+        .from(TABLE_RECEIVABLES)
+        .select('*')
+        .order('dt_vencto', { ascending: false })
+        .order('id', { ascending: false })
+        .range(from, to);
+        
+      promises.push(promise);
+    }
+
+    const responses = await Promise.all(promises);
+
+    for (const response of responses) {
+      if (response.error) throw response.error;
+      if (response.data) {
+        allData = [...allData, ...(response.data as ReceivableRecord[])];
+      }
+    }
+
+    return { 
+      data: allData, 
+      isMock: false,
+      totalDbCount
+    };
+
+  } catch (err: any) {
+    console.error("Erro ao buscar dados de contas a receber:", err);
+    return { data: [], isMock: true, error: err.message, totalDbCount: 0 };
+  }
+};
+
 // --- SYNC VIA EDGE FUNCTION (SERVER-SIDE) ---
-export const syncDataFromPowerBI = async (): Promise<{ success: boolean; message: string }> => {
-  console.log("Iniciando sincronização via Edge Function (smart-endpoint)...");
+export const syncDataFromPowerBI = async (target: 'payables' | 'receivables' = 'payables'): Promise<{ success: boolean; message: string }> => {
+  console.log(`Iniciando sincronização via Edge Function (smart-endpoint) [Target: ${target}]...`);
   
   try {
     const functionUrl = `${SUPABASE_URL}/functions/v1/smart-endpoint`;
@@ -84,7 +145,7 @@ export const syncDataFromPowerBI = async (): Promise<{ success: boolean; message
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${SUPABASE_KEY}`
       },
-      body: JSON.stringify({ action: 'sync' })
+      body: JSON.stringify({ action: 'sync', target })
     });
 
     if (!response.ok) {

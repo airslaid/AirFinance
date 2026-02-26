@@ -15,7 +15,6 @@ const AZURE_CONFIG = {
   workspaceId: "ea3fb6c3-dbc7-43ec-83c6-8f7ceadfcc58",
   datasetId: "da80cfb6-6798-46fe-b79e-37653f18c1ae",
   scope: "https://analysis.windows.net/powerbi/api/.default",
-  pbiTableName: "REL_FINANCEIRO"
 };
 
 const corsHeaders = {
@@ -34,21 +33,11 @@ const safeFloat = (val: any): number => {
   return isNaN(n) ? 0 : n;
 };
 
-// Helper para encontrar colunas com nomes parecidos (fuzzy match)
-const findValue = (row: any, ...candidates: string[]) => {
-  // 1. Tenta match exato
-  for (const c of candidates) {
-    if (row[c] !== undefined) return row[c];
-  }
-  // 2. Tenta match parcial
-  const keys = Object.keys(row);
-  for (const c of candidates) {
-    // Procura uma chave que contenha a string candidata (ex: 'cheq' e 'dt')
-    // Simplificação: procura chave que termine com o candidato ou contenha
-    const found = keys.find(k => k.includes(c));
-    if (found) return row[found];
-  }
-  return null;
+const parseDate = (v: any) => {
+  if (!v) return null;
+  try {
+    return new Date(v).toISOString().split('T')[0];
+  } catch { return null; }
 };
 
 serve(async (req) => {
@@ -57,8 +46,20 @@ serve(async (req) => {
   }
 
   try {
-    console.log("=== [START] Sync V6: Simple Unique (Filial + Lancto) ===");
+    const { action, target = 'payables' } = await req.json();
+    console.log(`=== [START] Sync V7: Target=${target} ===`);
     
+    // Define configurations based on target
+    let pbiTableName = "REL_FINANCEIRO";
+    let supabaseTable = "rel_financeiro";
+    let uniqueConstraint = "fil_in_codigo,mov_in_numlancto"; // Default for payables
+    
+    if (target === 'receivables') {
+        pbiTableName = "REL_CONTAS_RECEBER";
+        supabaseTable = "rel_contas_receber";
+        uniqueConstraint = "mov_in_numlancto"; // As defined in migration
+    }
+
     // 1. Autenticação Microsoft
     const tokenUrl = `https://login.microsoftonline.com/${AZURE_CONFIG.tenantId}/oauth2/v2.0/token`;
     const tokenBody = new URLSearchParams({
@@ -79,8 +80,8 @@ serve(async (req) => {
     console.log("1. Auth OK");
 
     // 2. Query Power BI
-    console.log("2. Querying Power BI...");
-    const daxQuery = `EVALUATE TOPN(10000, '${AZURE_CONFIG.pbiTableName}')`; 
+    console.log(`2. Querying Power BI Table: ${pbiTableName}...`);
+    const daxQuery = `EVALUATE TOPN(10000, '${pbiTableName}')`; 
     
     const queryUrl = `https://api.powerbi.com/v1.0/myorg/groups/${AZURE_CONFIG.workspaceId}/datasets/${AZURE_CONFIG.datasetId}/executeQueries`;
     
@@ -104,7 +105,7 @@ serve(async (req) => {
     // 3. Mapeamento
     console.log("3. Mapping & Cleaning...");
     
-    const rawRecords = rows.map((row: any, idx: number) => {
+    const rawRecords = rows.map((row: any) => {
        // Limpeza das chaves (remove Tabela[] e espaços)
        const cleanRow: any = {};
        Object.keys(row).forEach(key => {
@@ -115,63 +116,76 @@ serve(async (req) => {
          cleanRow[cleanKey] = row[key];
        });
 
-       // Debug da 1ª linha para encontrar colunas perdidas
-       if (idx === 0) {
-         console.log("[DEBUG] Clean Keys Sample:", Object.keys(cleanRow).join(', '));
-       }
-
-       // Fuzzy Find para cheq_dt_data se não existir direto
-       let cheqDtData = cleanRow['cheq_dt_data'];
-       if (cheqDtData === undefined) {
-          // Tenta encontrar algo que pareça data de cheque
-          const fuzzyKey = Object.keys(cleanRow).find(k => k.includes('cheq') && (k.includes('dt') || k.includes('data')));
-          if (fuzzyKey) {
-             console.log(`[INFO] Mapped 'cheq_dt_data' from '${fuzzyKey}'`);
-             cheqDtData = cleanRow[fuzzyKey];
+       if (target === 'receivables') {
+          return {
+            agn_in_codigo: safeInt(cleanRow.agn_in_codigo),
+            cre_st_documento: cleanRow.cre_st_documento,
+            cre_st_parcela: cleanRow.cre_st_parcela,
+            dt_baixa: parseDate(cleanRow.dt_baixa),
+            dt_lancamento: parseDate(cleanRow.dt_lancamento),
+            dt_vencto: parseDate(cleanRow.dt_vencto),
+            fpa_dt_emissao: parseDate(cleanRow.fpa_dt_emissao),
+            fpa_st_doctointerno: cleanRow.fpa_st_doctointerno,
+            fpa_st_favorecido: cleanRow.fpa_st_favorecido,
+            fre_in_numero: safeInt(cleanRow.fre_in_numero),
+            fre_tpd_st_codigo: cleanRow.fre_tpd_st_codigo,
+            mov_ch_conciliado: cleanRow.mov_ch_conciliado,
+            mov_ch_natureza: cleanRow.mov_ch_natureza,
+            mov_in_numlancto: safeInt(cleanRow.mov_in_numlancto),
+            mov_re_saldocpacre: safeFloat(cleanRow.mov_re_saldocpacre),
+            org_in_codigo: safeInt(cleanRow.org_in_codigo),
+            rcb_st_nota: cleanRow.rcb_st_nota,
+            valor: safeFloat(cleanRow.valor),
+          };
+       } else {
+          // Default: Payables (REL_FINANCEIRO)
+          
+          // Fuzzy Find para cheq_dt_data se não existir direto
+          let cheqDtData = cleanRow['cheq_dt_data'];
+          if (cheqDtData === undefined) {
+             const fuzzyKey = Object.keys(cleanRow).find(k => k.includes('cheq') && (k.includes('dt') || k.includes('data')));
+             if (fuzzyKey) cheqDtData = cleanRow[fuzzyKey];
           }
+
+          return {
+            agn_in_codigo: safeInt(cleanRow.agn_in_codigo),
+            valor: safeFloat(cleanRow.valor),
+            mov_dt_vencto: parseDate(cleanRow.mov_dt_vencto),
+            mov_dt_datadocto: parseDate(cleanRow.mov_dt_datadocto),
+            mov_ch_natureza: cleanRow.mov_ch_natureza || 'C',
+            fpa_st_favorecido: cleanRow.fpa_st_favorecido,
+            mov_ch_conciliado: cleanRow.mov_ch_conciliado || 'N',
+            fil_in_codigo: safeInt(cleanRow.fil_in_codigo),
+            rcb_st_nota: cleanRow.rcb_st_nota,
+            cheqbx_re_vrbaixa: safeFloat(cleanRow.cheqbx_re_vrbaixa),
+            cheqbx_re_vrjuros: safeFloat(cleanRow.cheqbx_re_vrjuros),
+            conta_baixa: safeInt(cleanRow.conta_baixa),
+            cpa_in_ap: safeInt(cleanRow.cpa_in_ap),
+            cpa_st_documento: cleanRow.cpa_st_documento,
+            cpa_st_parcela: cleanRow.cpa_st_parcela,
+            fpa_dt_emissao: parseDate(cleanRow.fpa_dt_emissao),
+            fpa_in_contador: safeInt(cleanRow.fpa_in_contador),
+            fpa_in_numero: safeInt(cleanRow.fpa_in_numero),
+            fpa_st_doctointerno: cleanRow.fpa_st_doctointerno,
+            fpa_tpd_st_codigo: cleanRow.fpa_tpd_st_codigo,
+            mov_in_numlancto: safeInt(cleanRow.mov_in_numlancto),
+            mov_re_saldocpacre: safeFloat(cleanRow.mov_re_saldocpacre),
+            org_in_codigo: safeInt(cleanRow.org_in_codigo),
+            cheq_dt_data: parseDate(cheqDtData), 
+          };
        }
-
-       const parseDate = (v: any) => {
-         if (!v) return null;
-         try {
-           return new Date(v).toISOString().split('T')[0];
-         } catch { return null; }
-       };
-
-       return {
-          agn_in_codigo: safeInt(cleanRow.agn_in_codigo),
-          valor: safeFloat(cleanRow.valor),
-          mov_dt_vencto: parseDate(cleanRow.mov_dt_vencto),
-          mov_dt_datadocto: parseDate(cleanRow.mov_dt_datadocto),
-          mov_ch_natureza: cleanRow.mov_ch_natureza || 'C',
-          fpa_st_favorecido: cleanRow.fpa_st_favorecido,
-          mov_ch_conciliado: cleanRow.mov_ch_conciliado || 'N',
-          fil_in_codigo: safeInt(cleanRow.fil_in_codigo),
-          rcb_st_nota: cleanRow.rcb_st_nota,
-          cheqbx_re_vrbaixa: safeFloat(cleanRow.cheqbx_re_vrbaixa),
-          cheqbx_re_vrjuros: safeFloat(cleanRow.cheqbx_re_vrjuros),
-          conta_baixa: safeInt(cleanRow.conta_baixa),
-          cpa_in_ap: safeInt(cleanRow.cpa_in_ap),
-          cpa_st_documento: cleanRow.cpa_st_documento,
-          cpa_st_parcela: cleanRow.cpa_st_parcela,
-          fpa_dt_emissao: parseDate(cleanRow.fpa_dt_emissao),
-          fpa_in_contador: safeInt(cleanRow.fpa_in_contador),
-          fpa_in_numero: safeInt(cleanRow.fpa_in_numero),
-          fpa_st_doctointerno: cleanRow.fpa_st_doctointerno,
-          fpa_tpd_st_codigo: cleanRow.fpa_tpd_st_codigo,
-          mov_in_numlancto: safeInt(cleanRow.mov_in_numlancto),
-          mov_re_saldocpacre: safeFloat(cleanRow.mov_re_saldocpacre),
-          org_in_codigo: safeInt(cleanRow.org_in_codigo),
-          cheq_dt_data: parseDate(cheqDtData), 
-       };
     });
 
-    // 3.1 DESDUPLICAÇÃO SIMPLIFICADA (Filial + Lancto)
-    console.log("3.1 Deduplicating (Filial + Lancto)...");
+    // 3.1 Deduplication
+    console.log("3.1 Deduplicating...");
     const uniqueMap = new Map();
     rawRecords.forEach((r: any) => {
-        // Chave composta simples: Filial + NumLancto
-        const uniqueKey = `${r.fil_in_codigo}|${r.mov_in_numlancto}`;
+        let uniqueKey = "";
+        if (target === 'receivables') {
+            uniqueKey = `${r.mov_in_numlancto}`;
+        } else {
+            uniqueKey = `${r.fil_in_codigo}|${r.mov_in_numlancto}`;
+        }
         uniqueMap.set(uniqueKey, r);
     });
     
@@ -182,11 +196,10 @@ serve(async (req) => {
     // @ts-ignore
     const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
     // @ts-ignore
-    // USA SERVICE_ROLE_KEY SE DISPONIVEL, SENAO TENTA A ORIGINAL, SENAO A ANON (ULTIMO RECURSO)
     const supabaseKey = Deno.env.get('SERVICE_ROLE_KEY') ?? Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? Deno.env.get('SUPABASE_ANON_KEY') ?? '';
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    console.log("4. Upserting to Supabase...");
+    console.log(`4. Upserting to Supabase Table: ${supabaseTable}...`);
     
     const BATCH_SIZE = 1000;
     let totalUpserted = 0;
@@ -195,10 +208,9 @@ serve(async (req) => {
         const batch = records.slice(i, i + BATCH_SIZE);
         
         const { error: dbError } = await supabase
-          .from('rel_financeiro')
+          .from(supabaseTable)
           .upsert(batch, { 
-            // IMPORTANTE: A Constraint no banco deve ser UNIQUE(fil_in_codigo, mov_in_numlancto)
-            onConflict: 'fil_in_codigo,mov_in_numlancto', 
+            onConflict: uniqueConstraint, 
             ignoreDuplicates: false 
           });
 

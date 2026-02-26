@@ -32,6 +32,28 @@ export interface FinancialRecord {
   org_in_codigo?: number;
 }
 
+export interface ReceivableRecord {
+  id?: number;
+  agn_in_codigo?: number;
+  cre_st_documento?: string;
+  cre_st_parcela?: string;
+  dt_baixa?: string;
+  dt_lancamento?: string;
+  dt_vencto?: string;
+  fpa_dt_emissao?: string;
+  fpa_st_doctointerno?: string;
+  fpa_st_favorecido?: string;
+  fre_in_numero?: number;
+  fre_tpd_st_codigo?: string;
+  mov_ch_conciliado?: string;
+  mov_ch_natureza?: string;
+  mov_in_numlancto?: number;
+  mov_re_saldocpacre?: number;
+  org_in_codigo?: number;
+  rcb_st_nota?: string;
+  valor?: number;
+}
+
 export interface KPIData {
   totalPending: number; // A Pagar (Em Aberto)
   totalPaid: number;    // Pago (Conciliado)
@@ -53,4 +75,4 @@ export interface UserProfile {
   last_sign_in_at?: string;
 }
 
-export type PageView = 'dashboard' | 'users';
+export type PageView = 'dashboard' | 'receivables' | 'users' | 'cashflow' | 'reports';

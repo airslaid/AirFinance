@@ -26,60 +26,99 @@ export const updateUserRole = async (userId: string, newRole: 'admin' | 'user') 
 
 export const createUser = async (email: string, password: string, fullName: string, role: string) => {
   try {
-    const { data, error } = await supabase.functions.invoke('admin-actions', {
-      body: {
-        action: 'create_user',
-        email,
-        password,
-        data: { full_name: fullName },
-        role
-      }
+    // Usando RPC (Função SQL) para criar usuário, evitando problemas com Edge Functions
+    const { data, error } = await supabase.rpc('admin_create_user', {
+      new_email: email,
+      new_password: password,
+      new_full_name: fullName,
+      new_role: role
     });
 
-    if (error) {
-       console.error("Erro retornado pelo invoke:", error);
-       
-       let errorMsg = "";
-
-       // 1. Tenta pegar a mensagem de erro do objeto Error padrão
-       if (error instanceof Error) {
-         errorMsg = error.message;
-       } 
-       // 2. Tenta pegar de um objeto genérico (FunctionsHttpError)
-       else if (typeof error === 'object' && error !== null) {
-         // Verifica se tem contexto com resposta JSON da nossa Edge Function
-         const ctx = (error as any).context;
-         if (ctx && typeof ctx === 'object') {
-            if (ctx.error) errorMsg = ctx.error;
-            else if (ctx.message) errorMsg = ctx.message;
-         }
-         
-         // Se não achou no contexto, pega a mensagem base
-         if (!errorMsg && (error as any).message) {
-            errorMsg = (error as any).message;
-         }
-       }
-
-       // 3. Fallback se ainda estiver vazio
-       if (!errorMsg) errorMsg = "Erro desconhecido na Edge Function.";
-
-       // 4. Intercepta erros comuns para dar dicas
-       if (errorMsg.includes("non-2xx") || errorMsg.includes("status code") || errorMsg.includes("Faltam as seguintes Secrets")) {
-           errorMsg = "Falha na Configuração: Verifique se as Secrets (SUPABASE_URL, SUPABASE_ANON_KEY, SERVICE_ROLE_KEY) foram adicionadas na Edge Function no painel.";
-       }
-       
-       throw new Error(errorMsg);
-    }
+    if (error) throw error;
     
-    // Verifica erro lógico retornado no corpo da resposta (data)
-    if (data && data.error) {
-        throw new Error(data.error);
+    // A função RPC retorna um JSONB { success: boolean, error?: string }
+    if (data && data.success === false) {
+        throw new Error(data.error || "Erro ao criar usuário (SQL).");
     }
 
     return data;
 
   } catch (err: any) {
     console.error("Erro no serviço create user:", err);
-    throw new Error(err.message || "Erro de comunicação com o servidor.");
+    throw new Error(getErrorMessage(err, "Erro ao criar usuário."));
+  }
+};
+
+// Helper para extrair mensagem de erro detalhada
+const getErrorMessage = (error: any, defaultMsg: string) => {
+  let errorMsg = "";
+
+  if (error instanceof Error) {
+    errorMsg = error.message;
+  } else if (typeof error === 'object' && error !== null) {
+    // Verifica se veio do nosso backend customizado (success: false)
+    if (error.success === false && error.error) {
+        return error.error;
+    }
+
+    const ctx = (error as any).context;
+    if (ctx && typeof ctx === 'object') {
+       if (ctx.error) errorMsg = ctx.error;
+       else if (ctx.message) errorMsg = ctx.message;
+    }
+    
+    if (!errorMsg && (error as any).message) {
+       errorMsg = (error as any).message;
+    }
+  }
+
+  if (!errorMsg) errorMsg = defaultMsg;
+
+  if (errorMsg.includes("non-2xx") || errorMsg.includes("status code")) {
+      return "Erro de conexão com o servidor (500). Verifique se o código da Edge Function foi atualizado no Supabase.";
+  }
+
+  return errorMsg;
+};
+
+export const deleteUser = async (userId: string) => {
+  try {
+    // Usando RPC (Função SQL) em vez de Edge Function para maior confiabilidade
+    const { data, error } = await supabase.rpc('admin_delete_user', {
+      target_user_id: userId
+    });
+
+    if (error) throw error;
+    
+    // A função RPC retorna um JSONB { success: boolean, error?: string }
+    if (data && data.success === false) {
+        throw new Error(data.error || "Erro ao deletar usuário (SQL).");
+    }
+
+    return data;
+  } catch (err: any) {
+    console.error("Erro ao deletar usuário:", err);
+    throw new Error(getErrorMessage(err, "Erro ao deletar usuário."));
+  }
+};
+
+export const resetPassword = async (userId: string, password: string) => {
+  try {
+    // Usando RPC (Função SQL) para resetar senha
+    const { data, error } = await supabase.rpc('admin_reset_password', {
+      target_user_id: userId,
+      new_password: password
+    });
+
+    if (error) throw error;
+
+    if (data && data.success === false) {
+        throw new Error(data.error || "Erro ao resetar senha (SQL).");
+    }
+
+    return data;
+  } catch (err: any) {
+    console.error("Erro ao resetar senha:", err);
+    throw new Error(getErrorMessage(err, "Erro ao resetar senha."));
   }
 };

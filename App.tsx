@@ -2,6 +2,9 @@
 import React, { useEffect, useState } from 'react';
 import { Layout } from './components/Layout';
 import { Dashboard } from './components/Dashboard';
+import { ReceivablesDashboard } from './components/ReceivablesDashboard';
+import { CashFlowDashboard } from './components/CashFlowDashboard';
+import { ReportsDashboard } from './components/ReportsDashboard';
 import { UserManagement } from './components/UserManagement';
 import { Login } from './components/Login';
 import { supabase } from './services/supabaseClient';
@@ -12,7 +15,7 @@ import { PageView } from './types';
 function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
-  const [currentPage, setCurrentPage] = useState<PageView>('dashboard');
+  const [currentPage, setCurrentPage] = useState<PageView>('cashflow');
 
   useEffect(() => {
     // 1. Check active session
@@ -47,7 +50,11 @@ function App() {
 
   return (
     <Layout currentPage={currentPage} onNavigate={setCurrentPage}>
-      {currentPage === 'dashboard' ? <Dashboard /> : <UserManagement />}
+      {currentPage === 'dashboard' && <Dashboard />}
+      {currentPage === 'receivables' && <ReceivablesDashboard />}
+      {currentPage === 'cashflow' && <CashFlowDashboard />}
+      {currentPage === 'reports' && <ReportsDashboard />}
+      {currentPage === 'users' && <UserManagement />}
     </Layout>
   );
 }

@@ -1,6 +1,7 @@
+
 import React, { useState } from 'react';
 import { supabase } from '../services/supabaseClient';
-import { CircleDollarSign, Loader2, Lock, Mail, ArrowRight } from 'lucide-react';
+import { CircleDollarSign, Loader2, Lock, Mail, ArrowRight, AlertCircle } from 'lucide-react';
 
 export const Login: React.FC = () => {
   const [email, setEmail] = useState('');
@@ -14,13 +15,15 @@ export const Login: React.FC = () => {
     setError(null);
 
     try {
+      // .trim() remove espaços antes e depois do email (erro comum de copy-paste)
       const { error } = await supabase.auth.signInWithPassword({
-        email,
+        email: email.trim(),
         password,
       });
 
       if (error) throw error;
     } catch (err: any) {
+      console.error("Login Error:", err);
       setError(err.message || 'Falha na autenticação');
     } finally {
       setLoading(false);
@@ -46,9 +49,12 @@ export const Login: React.FC = () => {
         <div className="p-8">
           <form onSubmit={handleLogin} className="space-y-5">
             {error && (
-              <div className="bg-red-50 border-l-4 border-red-500 p-3 text-sm text-red-700">
-                <p className="font-bold">Erro de acesso</p>
-                <p>{error === "Invalid login credentials" ? "E-mail ou senha incorretos." : error}</p>
+              <div className="bg-red-50 border-l-4 border-red-500 p-4 flex items-start gap-3 rounded-sm">
+                <AlertCircle className="text-red-500 shrink-0 mt-0.5" size={18} />
+                <div className="text-sm text-red-700">
+                   <p className="font-bold">Não foi possível entrar</p>
+                   <p>{error === "Invalid login credentials" ? "E-mail ou senha incorretos." : error}</p>
+                </div>
               </div>
             )}
 
@@ -114,7 +120,7 @@ export const Login: React.FC = () => {
         
         <div className="bg-slate-50 px-8 py-4 border-t border-slate-200 flex justify-between items-center text-xs text-slate-500">
             <span>&copy; {new Date().getFullYear()} AirFinance</span>
-            <span>v1.0.3</span>
+            <span>v1.0.4</span>
         </div>
       </div>
     </div>

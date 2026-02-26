@@ -1,7 +1,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { UserProfile } from '../types';
-import { fetchProfiles, updateUserRole, createUser } from '../services/userService';
+import { fetchProfiles, updateUserRole, createUser, deleteUser, resetPassword } from '../services/userService';
 import { 
   Users, 
   Shield, 
@@ -13,7 +13,9 @@ import {
   X, 
   Loader2, 
   Mail, 
-  Lock 
+  Lock,
+  Trash2,
+  Key
 } from 'lucide-react';
 import { supabase } from '../services/supabaseClient';
 
@@ -23,6 +25,17 @@ export const UserManagement: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
   const [currentUserEmail, setCurrentUserEmail] = useState<string | undefined>('');
+
+  // Delete Modal State
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [userToDelete, setUserToDelete] = useState<UserProfile | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  // Reset Password Modal State
+  const [showResetModal, setShowResetModal] = useState(false);
+  const [userToReset, setUserToReset] = useState<UserProfile | null>(null);
+  const [resetPasswordValue, setResetPasswordValue] = useState('');
+  const [resetting, setResetting] = useState(false);
 
   // Form State
   const [newUserEmail, setNewUserEmail] = useState('');
@@ -62,6 +75,46 @@ export const UserManagement: React.FC = () => {
     } catch (err) {
       alert("Erro ao atualizar permissão.");
       loadData(); // Revert
+    }
+  };
+
+  const handleDeleteUser = async () => {
+    if (!userToDelete) return;
+    
+    if (userToDelete.email === currentUserEmail) {
+        alert("Você não pode excluir seu próprio usuário.");
+        return;
+    }
+
+    setDeleting(true);
+    try {
+        await deleteUser(userToDelete.id);
+        alert("Usuário excluído com sucesso!");
+        setShowDeleteModal(false);
+        setUserToDelete(null);
+        loadData();
+    } catch (err: any) {
+        alert("Erro ao excluir usuário: " + err.message);
+    } finally {
+        setDeleting(false);
+    }
+  };
+
+  const handleResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!userToReset) return;
+
+    setResetting(true);
+    try {
+        await resetPassword(userToReset.id, resetPasswordValue);
+        alert("Senha alterada com sucesso!");
+        setShowResetModal(false);
+        setUserToReset(null);
+        setResetPasswordValue('');
+    } catch (err: any) {
+        alert("Erro ao alterar senha: " + err.message);
+    } finally {
+        setResetting(false);
     }
   };
 
@@ -170,19 +223,131 @@ export const UserManagement: React.FC = () => {
                         {new Date(profile.created_at).toLocaleDateString('pt-BR')}
                      </td>
                      <td className="px-6 py-4 text-right">
-                        <button 
-                           onClick={() => handleRoleChange(profile.id, profile.role)}
-                           className="text-slate-400 hover:text-rose-600 font-medium text-xs border border-slate-200 px-3 py-1 rounded-sm hover:border-rose-200 transition-all bg-white"
-                           title="Alterar permissão"
-                        >
-                           {profile.role === 'admin' ? 'Rebaixar' : 'Promover'}
-                        </button>
+                        <div className="flex items-center justify-end gap-2">
+                            <button 
+                               onClick={() => {
+                                   setUserToReset(profile);
+                                   setShowResetModal(true);
+                               }}
+                               className="text-slate-400 hover:text-blue-600 p-1.5 rounded-sm hover:bg-blue-50 transition-colors border border-transparent hover:border-blue-200"
+                               title="Alterar Senha"
+                            >
+                               <Key size={16} />
+                            </button>
+                            
+                            <button 
+                               onClick={() => handleRoleChange(profile.id, profile.role)}
+                               className="text-slate-400 hover:text-rose-600 font-medium text-xs border border-slate-200 px-3 py-1.5 rounded-sm hover:border-rose-200 transition-all bg-white min-w-[80px]"
+                               title="Alterar permissão"
+                            >
+                               {profile.role === 'admin' ? 'Rebaixar' : 'Promover'}
+                            </button>
+
+                            <button 
+                               onClick={() => {
+                                   setUserToDelete(profile);
+                                   setShowDeleteModal(true);
+                               }}
+                               className="text-slate-400 hover:text-red-600 p-1.5 rounded-sm hover:bg-red-50 transition-colors border border-transparent hover:border-red-200"
+                               title="Excluir Usuário"
+                            >
+                               <Trash2 size={16} />
+                            </button>
+                        </div>
                      </td>
                   </tr>
                ))}
             </tbody>
           </table>
        </div>
+
+       {/* DELETE CONFIRMATION MODAL */}
+       {showDeleteModal && userToDelete && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+             <div className="bg-white w-full max-w-sm rounded-lg shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
+                <div className="p-6 text-center">
+                   <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <Trash2 className="text-red-600" size={24} />
+                   </div>
+                   <h3 className="text-lg font-bold text-slate-800 mb-2">Excluir Usuário?</h3>
+                   <p className="text-sm text-slate-500 mb-6">
+                      Tem certeza que deseja excluir <strong>{userToDelete.full_name || userToDelete.email}</strong>? Esta ação não pode ser desfeita.
+                   </p>
+                   
+                   <div className="flex gap-3">
+                      <button 
+                        onClick={() => setShowDeleteModal(false)}
+                        className="flex-1 px-4 py-2 border border-slate-300 text-slate-700 font-bold text-sm rounded-sm hover:bg-slate-50 transition-colors"
+                      >
+                         Cancelar
+                      </button>
+                      <button 
+                        onClick={handleDeleteUser}
+                        disabled={deleting}
+                        className="flex-1 px-4 py-2 bg-red-600 text-white font-bold text-sm rounded-sm hover:bg-red-700 transition-colors disabled:opacity-70 flex justify-center items-center gap-2"
+                      >
+                         {deleting && <Loader2 size={16} className="animate-spin" />}
+                         Excluir
+                      </button>
+                   </div>
+                </div>
+             </div>
+          </div>
+       )}
+
+       {/* RESET PASSWORD MODAL */}
+       {showResetModal && userToReset && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+             <div className="bg-white w-full max-w-sm rounded-lg shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
+                <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+                   <h3 className="font-bold text-slate-800">Alterar Senha</h3>
+                   <button onClick={() => setShowResetModal(false)} className="text-slate-400 hover:text-slate-600"><X size={20}/></button>
+                </div>
+                
+                <form onSubmit={handleResetPassword} className="p-6 space-y-4">
+                   <div className="bg-blue-50 p-3 rounded-sm border border-blue-100 mb-4">
+                      <p className="text-xs text-blue-800">
+                         Alterando senha para: <strong>{userToReset.email}</strong>
+                      </p>
+                   </div>
+
+                   <div>
+                      <label className="block text-xs font-bold text-slate-600 uppercase mb-1">Nova Senha</label>
+                      <div className="relative">
+                         <Lock size={16} className="absolute left-3 top-2.5 text-slate-400" />
+                         <input 
+                           type="password" 
+                           required
+                           minLength={6}
+                           value={resetPasswordValue}
+                           onChange={e => setResetPasswordValue(e.target.value)}
+                           className="w-full pl-9 pr-3 py-2 border border-slate-300 rounded-sm text-sm focus:border-rose-500 focus:outline-none"
+                           placeholder="Mínimo 6 caracteres"
+                         />
+                      </div>
+                   </div>
+
+                   <div className="pt-2 flex gap-3">
+                      <button 
+                        type="button" 
+                        onClick={() => setShowResetModal(false)}
+                        className="flex-1 px-4 py-2 border border-slate-300 text-slate-700 font-bold text-sm rounded-sm hover:bg-slate-50 transition-colors"
+                      >
+                         Cancelar
+                      </button>
+                      <button 
+                        type="submit" 
+                        disabled={resetting}
+                        className="flex-1 px-4 py-2 bg-blue-600 text-white font-bold text-sm rounded-sm hover:bg-blue-700 transition-colors disabled:opacity-70 flex justify-center items-center gap-2"
+                      >
+                         {resetting && <Loader2 size={16} className="animate-spin" />}
+                         Salvar Senha
+                      </button>
+                   </div>
+                </form>
+             </div>
+          </div>
+       )}
 
        {/* ADD MODAL */}
        {showAddModal && (
